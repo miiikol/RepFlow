@@ -1,0 +1,19 @@
+# backend
+backend/target/
+backend/data/
+backend/logs/
+*.log
+
+# frontend
+frontend/node_modules/
+frontend/.tmp/
+frontend/dist/
+
+# env
+.env
+
+# IDE
+.idea/
+.vscode/
+*.iml
+.DS_Store
