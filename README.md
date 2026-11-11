@@ -106,7 +106,7 @@ reqflow/
 │   │   └── service/        # 业务、状态机、数据权限、导出
 │   ├── src/main/resources/
 │   │   ├── db/migration/   # Flyway 建表与演示数据
-│   │   └── static/         # 前端构建产物（单进程演示）
+│   │   └── static/         # 前端构建产物（由 npm run build 生成，不入库）
 │   └── src/test/           # 状态机、权限、并发、编号测试
 ├── frontend/
 │   └── src/{api,layout,router,store,utils,views}
@@ -133,7 +133,7 @@ reqflow/
 
 ### 1. 后端直接启动（推荐，零数据库安装）
 
-> 前端产物已构建到 `backend/src/main/resources/static`。
+> 前端产物不入库，首次运行前请先构建：`cd frontend && npm install && npm run build`（Vite 输出到 `backend/src/main/resources/static`）。
 
 ```bash
 cd backend
@@ -183,7 +183,7 @@ mvn clean package -DskipTests
 java -jar target/reqflow-backend-1.0.0.jar
 ```
 
-前端已构建进 jar 的 `static` 目录，单进程即可演示。重新构建前端：
+前端产物不入库，打包前需先构建；Vite 输出到 `backend/src/main/resources/static`，会随 jar 一起打包。重新构建前端：
 
 ```bash
 cd frontend
