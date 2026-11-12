@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>ReqFlow API · OpenAPI 1.0.0</title>
+  <link rel="stylesheet" href="https://unpkg.com/swagger-ui-dist@5/swagger-ui.css" />
+  <style>
+    body { margin: 0; background: #fafafa; }
+    #fallback {
+      max-width: 760px; margin: 64px auto; padding: 24px 28px;
+      font: 14px/1.8 -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
+      color: #333; background: #fff; border: 1px solid #e5e7eb; border-radius: 8px;
+    }
+    #fallback code { background: #f3f4f6; padding: 2px 6px; border-radius: 4px; }
+    #swagger-ui { display: none; }
+  </style>
+</head>
+<body>
+  <div id="fallback">
+    <h2>ReqFlow 接口文档</h2>
+    <p>本页面通过 Swagger UI 渲染同目录下的 <code>openapi.json</code>。</p>
+    <p>浏览器直接以 <code>file://</code> 打开时，可能会因为跨域策略无法读取 JSON，请在本目录启动一个静态服务器：</p>
+    <pre><code>cd docs/api
+python -m http.server 8000</code></pre>
+    <p>然后访问 <code>http://localhost:8000/</code>。也可以启动后端后访问 <code>http://localhost:8080/swagger-ui.html</code>。</p>
+    <p>如果只需要机器可读的契约文件，直接使用 <a href="./openapi.json">openapi.json</a>。</p>
+  </div>
+
+  <div id="swagger-ui"></div>
+  <script src="https://unpkg.com/swagger-ui-dist@5/swagger-ui-bundle.js"></script>
+  <script>
+    fetch('./openapi.json')
+      .then((res) => {
+        if (!res.ok) throw new Error('HTTP ' + res.status)
+        return res.json()
+      })
+      .then((spec) => {
+        document.getElementById('fallback').style.display = 'none'
+        document.getElementById('swagger-ui').style.display = 'block'
+        SwaggerUIBundle({
+          spec,
+          dom_id: '#swagger-ui',
+          deepLinking: true,
+          presets: [SwaggerUIBundle.presets.apis],
+          layout: 'BaseLayout'
+        })
+      })
+      .catch(() => { /* 保留 fallback 提示 */ })
+  </script>
+</body>
+</html>
