@@ -21,7 +21,19 @@ public final class SecurityUtils {
         return currentUser().getId();
     }
 
+    /** 管理员判定走权限点，不再依赖角色码 */
     public static boolean isAdmin() {
-        return currentUser().getRoles().contains("ADMIN");
+        return hasPermission(Permissions.ADMIN);
+    }
+
+    public static boolean hasPermission(String permission) {
+        return hasPermission(currentUser(), permission);
+    }
+
+    public static boolean hasPermission(LoginUser user, String permission) {
+        if (user == null || user.getPermissions() == null) {
+            return false;
+        }
+        return user.getPermissions().contains(Permissions.ADMIN) || user.getPermissions().contains(permission);
     }
 }
