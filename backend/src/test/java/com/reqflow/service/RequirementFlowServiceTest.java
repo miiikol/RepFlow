@@ -7,6 +7,7 @@ import com.reqflow.domain.enums.RequirementAction;
 import com.reqflow.domain.enums.RequirementStatus;
 import com.reqflow.mapper.TaskMapper;
 import com.reqflow.security.LoginUser;
+import com.reqflow.support.SecurityTestSupport;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
@@ -58,7 +59,7 @@ class RequirementFlowServiceTest {
         user.setDeptId(1L);
         user.setStatus(1);
         user.setRoles(List.of(roles));
-        user.setPermissions(Set.of());
+        user.setPermissions(SecurityTestSupport.permissionsOf(roles));
         user.setDataScope("ALL");
         return user;
     }

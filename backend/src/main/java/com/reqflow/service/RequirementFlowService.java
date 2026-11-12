@@ -3,6 +3,8 @@ package com.reqflow.service;
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.reqflow.common.BizException;
 import com.reqflow.common.ErrorCode;
+import com.reqflow.common.Permissions;
+import com.reqflow.common.SecurityUtils;
 import com.reqflow.domain.entity.Requirement;
 import com.reqflow.domain.entity.Task;
 import com.reqflow.domain.enums.RequirementAction;
@@ -19,6 +21,9 @@ import java.util.*;
 
 /**
  * 需求状态机：状态枚举 + 流转表 + 统一校验入口。
+ * <p>
+ * 流转表约束的是“权限点”而不是角色码：角色只是权限点的集合，
+ * 新增或调整角色授权只改数据，不改代码。
  * 前端只提交动作编码，目标状态由服务端计算，避免直接篡改状态。
  */
 @Service
@@ -27,7 +32,7 @@ public class RequirementFlowService {
 
     private final TaskMapper taskMapper;
 
-    private record Transition(Set<String> from, String to, Set<String> roles) {
+    private record Transition(Set<String> from, String to, Set<String> permissions) {
     }
 
     private static final Map<RequirementAction, Transition> TRANSITIONS = new EnumMap<>(RequirementAction.class);
@@ -35,58 +40,58 @@ public class RequirementFlowService {
     static {
         TRANSITIONS.put(RequirementAction.SUBMIT, new Transition(
                 Set.of(RequirementStatus.DRAFT.name()), RequirementStatus.PENDING_ACCEPT.name(),
-                Set.of("BUSINESS", "ADMIN")));
+                Set.of(Permissions.REQUIREMENT_SUBMIT)));
         TRANSITIONS.put(RequirementAction.ACCEPT, new Transition(
                 Set.of(RequirementStatus.PENDING_ACCEPT.name()), RequirementStatus.ANALYZING.name(),
-                Set.of("RA", "ADMIN")));
+                Set.of(Permissions.REQUIREMENT_ACCEPT)));
         TRANSITIONS.put(RequirementAction.SUBMIT_REVIEW, new Transition(
                 Set.of(RequirementStatus.ANALYZING.name()), RequirementStatus.PENDING_REVIEW.name(),
-                Set.of("RA", "ADMIN")));
+                Set.of(Permissions.REQUIREMENT_SUBMIT_REVIEW)));
         TRANSITIONS.put(RequirementAction.REVIEW_PASS, new Transition(
                 Set.of(RequirementStatus.PENDING_REVIEW.name()), RequirementStatus.REVIEW_PASSED.name(),
-                Set.of("RA", "ADMIN")));
+                Set.of(Permissions.REQUIREMENT_REVIEW_DECIDE)));
         TRANSITIONS.put(RequirementAction.REVIEW_REJECT, new Transition(
                 Set.of(RequirementStatus.PENDING_REVIEW.name()), RequirementStatus.REJECTED.name(),
-                Set.of("RA", "ADMIN")));
+                Set.of(Permissions.REQUIREMENT_REVIEW_DECIDE)));
         TRANSITIONS.put(RequirementAction.RESUBMIT, new Transition(
                 Set.of(RequirementStatus.REJECTED.name()), RequirementStatus.ANALYZING.name(),
-                Set.of("BUSINESS", "RA", "ADMIN")));
+                Set.of(Permissions.REQUIREMENT_SUBMIT)));
         TRANSITIONS.put(RequirementAction.SCHEDULE, new Transition(
                 Set.of(RequirementStatus.REVIEW_PASSED.name()), RequirementStatus.SCHEDULED.name(),
-                Set.of("PM", "ADMIN")));
+                Set.of(Permissions.REQUIREMENT_SCHEDULE)));
         TRANSITIONS.put(RequirementAction.START_DEV, new Transition(
                 Set.of(RequirementStatus.SCHEDULED.name()), RequirementStatus.DEVELOPING.name(),
-                Set.of("PM", "DEV", "ADMIN")));
+                Set.of(Permissions.REQUIREMENT_DEVELOP)));
         TRANSITIONS.put(RequirementAction.SUBMIT_TEST, new Transition(
                 Set.of(RequirementStatus.DEVELOPING.name()), RequirementStatus.TESTING.name(),
-                Set.of("PM", "DEV", "QA", "ADMIN")));
+                Set.of(Permissions.REQUIREMENT_SUBMIT_TEST)));
         TRANSITIONS.put(RequirementAction.SUBMIT_ACCEPTANCE, new Transition(
                 Set.of(RequirementStatus.TESTING.name()), RequirementStatus.PENDING_ACCEPTANCE.name(),
-                Set.of("PM", "QA", "RA", "ADMIN")));
+                Set.of(Permissions.REQUIREMENT_SUBMIT_ACCEPTANCE)));
         TRANSITIONS.put(RequirementAction.ACCEPT_PASS, new Transition(
                 Set.of(RequirementStatus.PENDING_ACCEPTANCE.name()), RequirementStatus.ACCEPTED.name(),
-                Set.of("ACCEPT", "PM", "ADMIN")));
+                Set.of(Permissions.REQUIREMENT_ACCEPT_DECIDE)));
         TRANSITIONS.put(RequirementAction.ACCEPT_REJECT, new Transition(
                 Set.of(RequirementStatus.PENDING_ACCEPTANCE.name()), RequirementStatus.DEVELOPING.name(),
-                Set.of("ACCEPT", "PM", "ADMIN")));
+                Set.of(Permissions.REQUIREMENT_ACCEPT_DECIDE)));
         TRANSITIONS.put(RequirementAction.ARCHIVE, new Transition(
                 Set.of(RequirementStatus.ACCEPTED.name()), RequirementStatus.ARCHIVED.name(),
-                Set.of("RA", "PM", "ADMIN")));
+                Set.of(Permissions.REQUIREMENT_ARCHIVE)));
         TRANSITIONS.put(RequirementAction.HOLD, new Transition(
                 Set.of(RequirementStatus.PENDING_ACCEPT.name(), RequirementStatus.ANALYZING.name(),
                         RequirementStatus.PENDING_REVIEW.name(), RequirementStatus.REVIEW_PASSED.name(),
                         RequirementStatus.SCHEDULED.name(), RequirementStatus.DEVELOPING.name(),
                         RequirementStatus.TESTING.name(), RequirementStatus.PENDING_ACCEPTANCE.name()),
-                RequirementStatus.ON_HOLD.name(), Set.of("RA", "PM", "ADMIN")));
+                RequirementStatus.ON_HOLD.name(), Set.of(Permissions.REQUIREMENT_HOLD)));
         TRANSITIONS.put(RequirementAction.RESUME, new Transition(
-                Set.of(RequirementStatus.ON_HOLD.name()), null, Set.of("RA", "PM", "ADMIN")));
+                Set.of(RequirementStatus.ON_HOLD.name()), null, Set.of(Permissions.REQUIREMENT_HOLD)));
         TRANSITIONS.put(RequirementAction.CANCEL, new Transition(
                 Set.of(RequirementStatus.DRAFT.name(), RequirementStatus.PENDING_ACCEPT.name(),
                         RequirementStatus.ANALYZING.name(), RequirementStatus.PENDING_REVIEW.name(),
                         RequirementStatus.REVIEW_PASSED.name(), RequirementStatus.SCHEDULED.name(),
                         RequirementStatus.DEVELOPING.name(), RequirementStatus.TESTING.name(),
                         RequirementStatus.PENDING_ACCEPTANCE.name(), RequirementStatus.REJECTED.name()),
-                RequirementStatus.CANCELLED.name(), Set.of("BUSINESS", "RA", "PM", "ADMIN")));
+                RequirementStatus.CANCELLED.name(), Set.of(Permissions.REQUIREMENT_CANCEL)));
     }
 
     /** 由评审单/验收单驱动的动作，禁止通过通用动作接口直接调用 */
@@ -137,13 +142,13 @@ public class RequirementFlowService {
                     "当前状态【%s】不允许执行【%s】".formatted(
                             RequirementStatus.labelOf(requirement.getStatus()), action.label()));
         }
-        boolean roleAllowed = user.getRoles() != null && user.getRoles().stream()
-                .anyMatch(r -> transition.roles().contains(r));
-        if (!roleAllowed) {
+        boolean permissionAllowed = transition.permissions().stream()
+                .anyMatch(p -> SecurityUtils.hasPermission(user, p));
+        if (!permissionAllowed) {
             throw BizException.of(ErrorCode.FORBIDDEN, "当前角色无权执行【" + action.label() + "】");
         }
         boolean ownerOnly = action == RequirementAction.SUBMIT || action == RequirementAction.RESUBMIT;
-        if (ownerOnly && !user.getRoles().contains("ADMIN")
+        if (ownerOnly && !SecurityUtils.hasPermission(user, Permissions.ADMIN)
                 && !requirement.getProposerId().equals(user.getId())) {
             throw BizException.of(ErrorCode.FORBIDDEN, "只有需求提出人可以执行该操作");
         }
@@ -198,13 +203,13 @@ public class RequirementFlowService {
             if (transition == null || !transition.from().contains(requirement.getStatus())) {
                 continue;
             }
-            boolean roleAllowed = user.getRoles() != null && user.getRoles().stream()
-                    .anyMatch(r -> transition.roles().contains(r));
-            if (!roleAllowed) {
+            boolean permissionAllowed = transition.permissions().stream()
+                    .anyMatch(p -> SecurityUtils.hasPermission(user, p));
+            if (!permissionAllowed) {
                 continue;
             }
             if ((action == RequirementAction.SUBMIT || action == RequirementAction.RESUBMIT)
-                    && !user.getRoles().contains("ADMIN")
+                    && !SecurityUtils.hasPermission(user, Permissions.ADMIN)
                     && !requirement.getProposerId().equals(user.getId())) {
                 continue;
             }

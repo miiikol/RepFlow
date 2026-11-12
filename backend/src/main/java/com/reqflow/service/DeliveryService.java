@@ -6,6 +6,7 @@ import com.reqflow.audit.AuditAspect;
 import com.reqflow.common.BizException;
 import com.reqflow.common.ErrorCode;
 import com.reqflow.common.PageResult;
+import com.reqflow.common.Permissions;
 import com.reqflow.common.SecurityUtils;
 import com.reqflow.domain.entity.*;
 import com.reqflow.domain.enums.*;
@@ -105,7 +106,8 @@ public class DeliveryService {
             throw BizException.of(ErrorCode.READONLY);
         }
         LoginUser user = SecurityUtils.currentUser();
-        if (!deliverable.getUploaderId().equals(user.getId()) && !user.getRoles().contains("ADMIN")) {
+        if (!deliverable.getUploaderId().equals(user.getId())
+                && !SecurityUtils.hasPermission(user, Permissions.ADMIN)) {
             throw BizException.of(ErrorCode.FORBIDDEN);
         }
         deliverableMapper.deleteById(id);
@@ -222,7 +224,8 @@ public class DeliveryService {
             throw BizException.of(ErrorCode.ILLEGAL_TRANSITION, "验收单已处理");
         }
         LoginUser user = SecurityUtils.currentUser();
-        if (!user.getRoles().contains("ADMIN") && !Objects.equals(acceptance.getAcceptorId(), user.getId())) {
+        if (!SecurityUtils.hasPermission(user, Permissions.ADMIN)
+                && !Objects.equals(acceptance.getAcceptorId(), user.getId())) {
             throw BizException.of(ErrorCode.FORBIDDEN, "只有指定验收人可以提交结论");
         }
         Requirement requirement = requirementService.getVisible(acceptance.getRequirementId());
