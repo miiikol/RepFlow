@@ -2,8 +2,11 @@ package com.reqflow.mapper;
 
 import com.baomidou.mybatisplus.core.mapper.BaseMapper;
 import com.reqflow.domain.entity.SysUser;
+import org.apache.ibatis.annotations.Param;
 import org.apache.ibatis.annotations.Select;
+import org.apache.ibatis.annotations.Update;
 
+import java.time.LocalDateTime;
 import java.util.List;
 
 public interface SysUserMapper extends BaseMapper<SysUser> {
@@ -32,4 +35,14 @@ public interface SysUserMapper extends BaseMapper<SysUser> {
 
     @Select("select * from sys_user where username = #{username} and deleted = 0 limit 1")
     SysUser selectByUsername(String username);
+
+    /** 原子自增失败次数，避免“先查后改”的并发覆盖 */
+    @Update("update sys_user set fail_count = fail_count + 1, updated_at = CURRENT_TIMESTAMP where id = #{userId}")
+    int increaseFailCount(@Param("userId") Long userId);
+
+    @Update("update sys_user set fail_count = 0, lock_until = null, updated_at = CURRENT_TIMESTAMP where id = #{userId}")
+    int resetFailCount(@Param("userId") Long userId);
+
+    @Update("update sys_user set lock_until = #{lockUntil}, updated_at = CURRENT_TIMESTAMP where id = #{userId}")
+    int updateLockUntil(@Param("userId") Long userId, @Param("lockUntil") LocalDateTime lockUntil);
 }

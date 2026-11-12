@@ -10,6 +10,7 @@ import com.reqflow.mapper.SysUserMapper;
 import com.reqflow.security.JwtService;
 import com.reqflow.security.LoginUser;
 import com.reqflow.security.UserDetailsServiceImpl;
+import com.reqflow.service.support.LoginAttemptService;
 import com.reqflow.service.support.LookupService;
 import com.reqflow.vo.UserVO;
 import lombok.RequiredArgsConstructor;
@@ -35,8 +36,12 @@ public class AuthService {
     private final JwtService jwtService;
     private final PasswordEncoder passwordEncoder;
     private final LookupService lookupService;
+    private final LoginAttemptService loginAttemptService;
 
-    @Transactional
+    /**
+     * 登录不加事务：失败计数由 {@link LoginAttemptService} 用独立事务提交，
+     * 否则“写 fail_count 后抛异常”会被同一个事务回滚，账号锁定会失效。
+     */
     public LoginResponse login(LoginRequest request) {
         SysUser user = userMapper.selectByUsername(request.getUsername());
         if (user == null) {
@@ -52,9 +57,7 @@ public class AuthService {
             Authentication authentication = authenticationManager.authenticate(
                     new UsernamePasswordAuthenticationToken(request.getUsername(), request.getPassword()));
             LoginUser loginUser = (LoginUser) authentication.getPrincipal();
-            user.setFailCount(0);
-            user.setLockUntil(null);
-            userMapper.updateById(user);
+            loginAttemptService.reset(user.getId());
             String token = jwtService.generate(loginUser);
             return new LoginResponse(token, "Bearer", jwtService.getExpireMinutes() * 60, toVO(loginUser));
         } catch (LockedException e) {
@@ -62,16 +65,13 @@ public class AuthService {
         } catch (DisabledException e) {
             throw BizException.of(ErrorCode.ACCOUNT_DISABLED);
         } catch (BadCredentialsException e) {
-            int fails = (user.getFailCount() == null ? 0 : user.getFailCount()) + 1;
-            user.setFailCount(fails);
-            if (fails >= 5) {
-                user.setLockUntil(LocalDateTime.now().plusMinutes(15));
-            }
-            userMapper.updateById(user);
-            throw fails >= 5
-                    ? BizException.of(ErrorCode.ACCOUNT_LOCKED, "连续 5 次密码错误，账号锁定 15 分钟")
+            int fails = loginAttemptService.recordFailure(user.getId());
+            throw fails >= LoginAttemptService.MAX_FAILS
+                    ? BizException.of(ErrorCode.ACCOUNT_LOCKED,
+                    "连续 " + LoginAttemptService.MAX_FAILS + " 次密码错误，账号锁定 "
+                            + LoginAttemptService.LOCK_MINUTES + " 分钟")
                     : BizException.of(ErrorCode.BAD_CREDENTIALS,
-                    "用户名或密码错误，还可尝试 " + (5 - fails) + " 次");
+                    "用户名或密码错误，还可尝试 " + (LoginAttemptService.MAX_FAILS - fails) + " 次");
         }
     }
 
