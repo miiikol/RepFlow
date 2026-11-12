@@ -24,8 +24,6 @@ public class Review {
     private String method;
 
     private Long hostId;
-    /** 评审人 ID，逗号分隔 */
-    private String reviewerIds;
     private LocalDateTime deadline;
     private String status;
     private String conclusion;

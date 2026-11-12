@@ -146,7 +146,7 @@ const drawer = reactive({ visible: false, loading: false })
 const detail = ref(null)
 const canOpinion = computed(() => {
   if (!detail.value || !auth.hasPerm('review:opinion')) return false
-  const ids = (detail.value.reviewerIds || '').split(',').filter(Boolean)
+  const ids = (detail.value.reviewerIds || []).map(String)
   return ids.includes(String(auth.user.id))
 })
 const canConclude = computed(() => detail.value && auth.hasPerm('review:decide')

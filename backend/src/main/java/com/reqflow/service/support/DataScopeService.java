@@ -3,13 +3,13 @@ package com.reqflow.service.support;
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.reqflow.common.BizException;
 import com.reqflow.common.ErrorCode;
+import com.reqflow.common.Permissions;
 import com.reqflow.domain.entity.Requirement;
 import com.reqflow.mapper.RequirementMapper;
 import com.reqflow.security.LoginUser;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 
-import java.util.List;
 import java.util.Set;
 
 /**
@@ -69,7 +69,7 @@ public class DataScopeService {
         String prefix = alias == null || alias.isBlank() ? "" : alias + ".";
         String scope = user.getDataScope() == null || !ALL_SCOPES.contains(user.getDataScope())
                 ? "SELF" : user.getDataScope();
-        boolean isRa = hasRole(user, "RA");
+        boolean canAccept = hasPermission(user, Permissions.REQUIREMENT_ACCEPT);
         return switch (scope) {
             case "ALL" -> new ScopeSql("1 = 1", new Object[0]);
             case "DEPT" -> new ScopeSql(
@@ -77,7 +77,7 @@ public class DataScopeService {
                             + " or " + prefix + "dept_id = {1}"
                             + " or " + prefix + "analyst_id = {0}"
                             + " or (" + prefix + "status = 'PENDING_ACCEPT' and {2} = 1))",
-                    new Object[]{user.getId(), user.getDeptId(), isRa ? 1 : 0});
+                    new Object[]{user.getId(), user.getDeptId(), canAccept ? 1 : 0});
             case "PROJECT" -> new ScopeSql(
                     "(" + prefix + "proposer_id = {0}"
                             + " or " + prefix + "pm_id = {0}"
@@ -87,17 +87,20 @@ public class DataScopeService {
                             + " or " + prefix + "id in (select a.requirement_id from acceptance a"
                             + " where a.acceptor_id = {0})"
                             + " or " + prefix + "id in (select rv.requirement_id from review rv"
-                            + " where rv.host_id = {0} or rv.reviewer_ids like {1})"
+                            + " where rv.host_id = {0} or rv.id in (select rp.review_id from review_participant rp"
+                            + " where rp.user_id = {0}))"
                             + " or " + prefix + "project_id in (select pj.id from project pj"
                             + " where pj.deleted = 0 and pj.pm_id = {0}))",
-                    new Object[]{user.getId(), "%," + user.getId() + ",%"});
+                    new Object[]{user.getId()});
             default -> new ScopeSql("(" + prefix + "proposer_id = {0})", new Object[]{user.getId()});
         };
     }
 
-    private boolean hasRole(LoginUser user, String role) {
-        List<String> roles = user.getRoles();
-        return roles != null && roles.contains(role);
+    private boolean hasPermission(LoginUser user, String permission) {
+        if (user.getPermissions() == null) {
+            return false;
+        }
+        return user.getPermissions().contains(Permissions.ADMIN) || user.getPermissions().contains(permission);
     }
 
     private record ScopeSql(String sql, Object[] params) {

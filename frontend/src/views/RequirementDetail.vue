@@ -666,7 +666,7 @@ const submitReview = async () => {
 
 const canAddOpinion = (review) => {
   if (review.status !== 'PENDING' || !auth.hasPerm('review:opinion')) return false
-  const ids = (review.reviewerIds || '').split(',').filter(Boolean)
+  const ids = (review.reviewerIds || []).map(String)
   return ids.includes(String(auth.user.id)) || review.hostId === auth.user.id
 }
 const canConclude = (review) => review.status === 'PENDING'

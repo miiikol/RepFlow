@@ -1,6 +1,7 @@
 package com.reqflow.service;
 
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
+import com.reqflow.common.Permissions;
 import com.reqflow.common.SecurityUtils;
 import com.reqflow.domain.entity.*;
 import com.reqflow.domain.enums.*;
@@ -42,6 +43,7 @@ public class DashboardService {
     private final RequirementMapper requirementMapper;
     private final TaskMapper taskMapper;
     private final ReviewMapper reviewMapper;
+    private final ReviewParticipantMapper reviewParticipantMapper;
     private final ChangeRequestMapper changeMapper;
     private final AcceptanceMapper acceptanceMapper;
     private final DataScopeService dataScopeService;
@@ -131,17 +133,17 @@ public class DashboardService {
         List<Map<String, Object>> items = new ArrayList<>();
         List<Requirement> visible = todoRequirements(user);
 
-        if (user.getRoles().contains("RA") || user.getRoles().contains("ADMIN")) {
+        if (SecurityUtils.hasPermission(user, Permissions.REQUIREMENT_ACCEPT)) {
             visible.stream().filter(r -> RequirementStatus.PENDING_ACCEPT.name().equals(r.getStatus())).limit(4)
                     .forEach(r -> items.add(requirementTodo("待受理", r, "待受理")));
             visible.stream().filter(r -> RequirementStatus.ANALYZING.name().equals(r.getStatus())).limit(3)
                     .forEach(r -> items.add(requirementTodo("分析中", r, "待编写规格")));
         }
-        if (user.getRoles().contains("PM") || user.getRoles().contains("ADMIN")) {
+        if (SecurityUtils.hasPermission(user, Permissions.REQUIREMENT_SCHEDULE)) {
             visible.stream().filter(r -> RequirementStatus.REVIEW_PASSED.name().equals(r.getStatus())).limit(4)
                     .forEach(r -> items.add(requirementTodo("待排期", r, "评审通过待排期")));
         }
-        if (user.getRoles().contains("BUSINESS")) {
+        if (SecurityUtils.hasPermission(user, Permissions.REQUIREMENT_SUBMIT)) {
             visible.stream().filter(r -> RequirementStatus.REJECTED.name().equals(r.getStatus())
                     && r.getProposerId().equals(user.getId())).limit(3)
                     .forEach(r -> items.add(requirementTodo("待修改", r, "评审驳回")));
@@ -152,11 +154,15 @@ public class DashboardService {
 
         List<Review> pendingReviews = reviewMapper.selectList(new QueryWrapper<Review>()
                 .eq("status", ReviewStatus.PENDING.name()).orderByAsc("deadline"));
+        Set<Long> myReviewIds = pendingReviews.isEmpty() ? Set.of()
+                : reviewParticipantMapper.selectList(new QueryWrapper<ReviewParticipant>()
+                        .in("review_id", pendingReviews.stream().map(Review::getId).toList())
+                        .eq("user_id", user.getId()))
+                .stream().map(ReviewParticipant::getReviewId).collect(java.util.stream.Collectors.toSet());
         Map<Long, Requirement> requirementMap = visible.stream()
                 .collect(java.util.stream.Collectors.toMap(Requirement::getId, r -> r));
         for (Review review : pendingReviews) {
-            boolean reviewer = Arrays.asList(review.getReviewerIds().split(","))
-                    .contains(String.valueOf(user.getId()));
+            boolean reviewer = myReviewIds.contains(review.getId());
             if ((reviewer || Objects.equals(review.getHostId(), user.getId()))
                     && requirementMap.containsKey(review.getRequirementId())) {
                 Requirement requirement = requirementMap.get(review.getRequirementId());
@@ -165,7 +171,7 @@ public class DashboardService {
             }
         }
 
-        if (user.getRoles().contains("PM") || user.getRoles().contains("ADMIN")) {
+        if (SecurityUtils.hasPermission(user, Permissions.CHANGE_APPROVE)) {
             changeMapper.selectList(new QueryWrapper<ChangeRequest>()
                             .eq("status", ChangeStatus.PENDING.name()).orderByDesc("created_at").last("limit 4"))
                     .stream().filter(c -> requirementMap.containsKey(c.getRequirementId()))

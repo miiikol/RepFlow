@@ -7,10 +7,12 @@ import com.reqflow.audit.AuditAspect;
 import com.reqflow.common.BizException;
 import com.reqflow.common.ErrorCode;
 import com.reqflow.common.PageResult;
+import com.reqflow.common.Permissions;
 import com.reqflow.common.SecurityUtils;
 import com.reqflow.domain.entity.Requirement;
 import com.reqflow.domain.entity.Review;
 import com.reqflow.domain.entity.ReviewOpinion;
+import com.reqflow.domain.entity.ReviewParticipant;
 import com.reqflow.domain.enums.RequirementAction;
 import com.reqflow.domain.enums.RequirementStatus;
 import com.reqflow.domain.enums.ReviewResult;
@@ -21,6 +23,7 @@ import com.reqflow.dto.ReviewCreateRequest;
 import com.reqflow.mapper.RequirementMapper;
 import com.reqflow.mapper.ReviewMapper;
 import com.reqflow.mapper.ReviewOpinionMapper;
+import com.reqflow.mapper.ReviewParticipantMapper;
 import com.reqflow.security.LoginUser;
 import com.reqflow.service.support.BizNoGenerator;
 import com.reqflow.service.support.DataScopeService;
@@ -44,6 +47,7 @@ public class ReviewService {
 
     private final ReviewMapper reviewMapper;
     private final ReviewOpinionMapper opinionMapper;
+    private final ReviewParticipantMapper participantMapper;
     private final RequirementMapper requirementMapper;
     private final RequirementService requirementService;
     private final RequirementFlowService flowService;
@@ -67,8 +71,15 @@ public class ReviewService {
             dataScopeService.applyByRequirement(wrapper, "requirement_id", user);
         }
         if (Boolean.TRUE.equals(mine)) {
-            wrapper.and(w -> w.eq("host_id", user.getId())
-                    .or().like("reviewer_ids", "%," + user.getId() + ",%"));
+            List<Long> participating = participantMapper.selectList(new QueryWrapper<ReviewParticipant>()
+                            .eq("user_id", user.getId()))
+                    .stream().map(ReviewParticipant::getReviewId).toList();
+            wrapper.and(w -> {
+                w.eq("host_id", user.getId());
+                if (!participating.isEmpty()) {
+                    w.or().in("id", participating);
+                }
+            });
         }
         wrapper.orderByDesc("created_at");
         Page<Review> result = reviewMapper.selectPage(new Page<>(page, Math.min(size, 100)), wrapper);
@@ -103,6 +114,9 @@ public class ReviewService {
         Map<Long, List<ReviewOpinion>> opinions = opinionMapper
                 .selectList(new QueryWrapper<ReviewOpinion>().in("review_id", ids))
                 .stream().collect(Collectors.groupingBy(ReviewOpinion::getReviewId));
+        Map<Long, List<ReviewParticipant>> participants = participantMapper
+                .selectList(new QueryWrapper<ReviewParticipant>().in("review_id", ids))
+                .stream().collect(Collectors.groupingBy(ReviewParticipant::getReviewId));
         Map<Long, Requirement> requirements = requirementMapper
                 .selectList(new QueryWrapper<Requirement>().in("id",
                         reviews.stream().map(Review::getRequirementId).distinct().toList()))
@@ -117,8 +131,10 @@ public class ReviewService {
                 vo.setRequirementTitle(requirement.getTitle());
             }
             vo.setHostName(users.get(review.getHostId()));
-            vo.setReviewerNames(Arrays.stream(Optional.ofNullable(review.getReviewerIds()).orElse("").split(","))
-                    .filter(s -> !s.isBlank()).map(s -> users.get(Long.parseLong(s)))
+            List<Long> reviewerIds = participants.getOrDefault(review.getId(), List.of()).stream()
+                    .map(ReviewParticipant::getUserId).toList();
+            vo.setReviewerIds(reviewerIds);
+            vo.setReviewerNames(reviewerIds.stream().map(users::get)
                     .filter(Objects::nonNull).collect(Collectors.joining("、")));
             vo.setStatusLabel(dictService.reviewStatusLabel(review.getStatus()));
             vo.setOpinions(opinions.getOrDefault(review.getId(), List.of()).stream().map(o -> {
@@ -152,13 +168,18 @@ public class ReviewService {
         review.setType(request.getType());
         review.setMethod(request.getMethod());
         review.setHostId(request.getHostId() == null ? user.getId() : request.getHostId());
-        review.setReviewerIds("," + request.getReviewerIds().stream()
-                .map(String::valueOf).collect(Collectors.joining(",")) + ",");
         review.setDeadline(request.getDeadline() == null ? LocalDateTime.now().plusDays(3) : request.getDeadline());
         review.setStatus(ReviewStatus.PENDING.name());
         review.setComment(request.getComment());
         review.setSnapshotJson(snapshot(requirement));
         reviewMapper.insert(review);
+        request.getReviewerIds().stream().distinct().forEach(reviewerId -> {
+            ReviewParticipant participant = new ReviewParticipant();
+            participant.setReviewId(review.getId());
+            participant.setUserId(reviewerId);
+            participant.setParticipantType(ReviewParticipant.TYPE_REVIEWER);
+            participantMapper.insert(participant);
+        });
 
         flowService.apply(requirement, RequirementAction.SUBMIT_REVIEW, user);
         requirementService.persist(requirement);
@@ -173,8 +194,9 @@ public class ReviewService {
             throw BizException.of(ErrorCode.ILLEGAL_TRANSITION, "评审已结束，不能继续提交意见");
         }
         LoginUser user = SecurityUtils.currentUser();
-        boolean reviewer = Arrays.asList(review.getReviewerIds().split(",")).contains(String.valueOf(user.getId()));
-        if (!reviewer && !user.getRoles().contains("ADMIN")) {
+        boolean reviewer = participantMapper.selectCount(new QueryWrapper<ReviewParticipant>()
+                .eq("review_id", id).eq("user_id", user.getId())) > 0;
+        if (!reviewer && !SecurityUtils.hasPermission(user, Permissions.ADMIN)) {
             throw BizException.of(ErrorCode.FORBIDDEN, "只有评审人才能提交意见");
         }
         ReviewResult.valueOf(request.getResult());
@@ -194,7 +216,7 @@ public class ReviewService {
             throw BizException.of(ErrorCode.ILLEGAL_TRANSITION, "评审单已结束");
         }
         LoginUser user = SecurityUtils.currentUser();
-        if (!user.getRoles().contains("ADMIN") && !Objects.equals(review.getHostId(), user.getId())) {
+        if (!SecurityUtils.hasPermission(user, Permissions.ADMIN) && !Objects.equals(review.getHostId(), user.getId())) {
             throw BizException.of(ErrorCode.FORBIDDEN, "只有主持人才可以提交评审结论");
         }
         Requirement requirement = requirementService.getVisible(review.getRequirementId());

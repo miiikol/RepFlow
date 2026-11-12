@@ -8,6 +8,7 @@ import com.reqflow.audit.AuditAspect;
 import com.reqflow.common.BizException;
 import com.reqflow.common.ErrorCode;
 import com.reqflow.common.PageResult;
+import com.reqflow.common.Permissions;
 import com.reqflow.common.SecurityUtils;
 import com.reqflow.domain.entity.*;
 import com.reqflow.domain.enums.*;
@@ -40,6 +41,7 @@ public class RequirementService {
     private final RequirementAttachmentMapper attachmentMapper;
     private final ReviewMapper reviewMapper;
     private final ReviewOpinionMapper opinionMapper;
+    private final ReviewParticipantMapper reviewParticipantMapper;
     private final ChangeRequestMapper changeMapper;
     private final TaskMapper taskMapper;
     private final DeliverableMapper deliverableMapper;
@@ -176,14 +178,19 @@ public class RequirementService {
         Map<Long, List<ReviewOpinion>> opinions = reviewIds.isEmpty() ? Map.of()
                 : opinionMapper.selectList(new QueryWrapper<ReviewOpinion>().in("review_id", reviewIds))
                 .stream().collect(Collectors.groupingBy(ReviewOpinion::getReviewId));
+        Map<Long, List<Long>> reviewParticipants = reviewIds.isEmpty() ? Map.of()
+                : reviewParticipantMapper.selectList(new QueryWrapper<ReviewParticipant>().in("review_id", reviewIds))
+                .stream().collect(Collectors.groupingBy(ReviewParticipant::getReviewId,
+                        Collectors.mapping(ReviewParticipant::getUserId, Collectors.toList())));
         detail.setReviews(reviews.stream().map(r -> {
             ReviewVO vo = new ReviewVO();
             BeanUtils.copyProperties(r, vo);
             vo.setRequirementNo(requirement.getReqNo());
             vo.setRequirementTitle(requirement.getTitle());
             vo.setHostName(users.get(r.getHostId()));
-            vo.setReviewerNames(Arrays.stream(Optional.ofNullable(r.getReviewerIds()).orElse("").split(","))
-                    .filter(s -> !s.isBlank()).map(s -> users.get(Long.parseLong(s)))
+            List<Long> reviewerIds = reviewParticipants.getOrDefault(r.getId(), List.of());
+            vo.setReviewerIds(reviewerIds);
+            vo.setReviewerNames(reviewerIds.stream().map(users::get)
                     .filter(Objects::nonNull).collect(Collectors.joining("、")));
             vo.setStatusLabel(dictService.reviewStatusLabel(r.getStatus()));
             vo.setOpinions(opinions.getOrDefault(r.getId(), List.of()).stream().map(o -> {
@@ -307,7 +314,8 @@ public class RequirementService {
             throw BizException.of(ErrorCode.ILLEGAL_TRANSITION, "只有草稿或已驳回的需求可以编辑");
         }
         boolean owner = requirement.getProposerId().equals(user.getId());
-        boolean canEdit = owner || user.getRoles().contains("ADMIN") || user.getRoles().contains("RA");
+        boolean canEdit = owner || SecurityUtils.hasPermission(user, Permissions.ADMIN)
+                || SecurityUtils.hasPermission(user, Permissions.REQUIREMENT_EDIT_ANY);
         if (!canEdit) {
             throw BizException.of(ErrorCode.FORBIDDEN);
         }
@@ -355,7 +363,8 @@ public class RequirementService {
             throw BizException.of(ErrorCode.ILLEGAL_TRANSITION, "只有草稿可以删除");
         }
         LoginUser user = SecurityUtils.currentUser();
-        if (!requirement.getProposerId().equals(user.getId()) && !user.getRoles().contains("ADMIN")) {
+        if (!requirement.getProposerId().equals(user.getId())
+                && !SecurityUtils.hasPermission(user, Permissions.ADMIN)) {
             throw BizException.of(ErrorCode.FORBIDDEN);
         }
         if (requirementMapper.deleteById(id) == 0) {
@@ -512,7 +521,8 @@ public class RequirementService {
         }
         getVisible(attachment.getRequirementId());
         LoginUser user = SecurityUtils.currentUser();
-        if (!attachment.getUploaderId().equals(user.getId()) && !user.getRoles().contains("ADMIN")) {
+        if (!attachment.getUploaderId().equals(user.getId())
+                && !SecurityUtils.hasPermission(user, Permissions.ADMIN)) {
             throw BizException.of(ErrorCode.FORBIDDEN);
         }
         attachmentMapper.deleteById(attachmentId);
