@@ -10,7 +10,7 @@
 
 ## 功能特性 · Features
 
-- **认证与权限 Authentication & RBAC**：账号密码登录、JWT（2 小时）、BCrypt 加盐、连续 5 次失败锁定 15 分钟、修改密码、首次登录改密标记；7 类内置角色、24 个权限点、接口级 `@PreAuthorize` 校验、前端菜单/按钮按权限显隐。
+- **认证与权限 Authentication & RBAC**：账号密码登录、JWT（2 小时）、BCrypt 加盐、连续 5 次失败锁定 15 分钟（失败计数独立事务，不会随登录异常回滚）、修改密码、首次登录改密标记；7 类内置角色、38 个权限点（含 13 个动作级权限点）、接口级 `@PreAuthorize` 校验、状态机与越权判断均按权限点驱动、前端菜单/按钮按权限显隐。
 - **数据权限 Data Scope**：ALL / DEPT / PROJECT / SELF 四档；列表、详情、导出、跨表查询复用同一套谓词，单条操作二次校验，越权统一返回 403。
 - **需求管理 Requirement**：需求单增删改查、编号自动生成、分页与七类筛选、逻辑删除、标签、关注人视图。
 - **需求状态机 State Machine**：动作驱动、服务端计算目标状态、非法流转拒绝并保持原状态；挂起/恢复保留挂起前状态。
@@ -20,6 +20,24 @@
 - **附件与导出 Attachment & Export**：20MB 限制、8 类后缀白名单、UUID 落盘、下载校验数据权限；按当前筛选条件导出需求清单 Excel（冻结表头、筛选器）。
 - **看板 Dashboard**：指标卡、状态分布、部门分布、近 6 个月趋势、我的待办；统计使用数据库分组聚合。
 - **审计 Audit**：`@Audit` 注解 + AOP 统一采集操作人、角色、IP、URI、对象、结果、耗时、追踪号，只读查询。
+
+---
+
+## 文档 · Documentation
+
+| 文档 | 内容 |
+|---|---|
+| [需求规格说明书](docs/01-需求规格说明书.md) | 角色、流程、功能需求、状态机、业务规则、验收标准 |
+| [接口文档](docs/02-接口文档.md) | 通用约定、错误码、50 个接口操作；契约见 [openapi.json](docs/api/openapi.json) |
+| [数据库设计说明](docs/03-数据库设计说明.md) | 20 张表、字段、索引、ER 关系、迁移与备份 |
+| [测试报告](docs/04-测试报告.md) | 33 个自动化用例结果、手工验收清单、风险 |
+| [部署手册](docs/05-部署手册.md) | H2 / MySQL / jar / Docker 四种部署方式与排障 |
+| [需求调研纪要](docs/06-需求调研纪要.md) | 角色化模拟访谈与需求归纳方法 |
+| [需求池](docs/07-需求池.md) | 45 条需求的优先级、状态与裁剪理由 |
+| [需求追溯矩阵](docs/08-需求追溯矩阵.md) | 需求 → 接口 → 代码 → 测试的双向追溯 |
+| [验收记录](docs/09-验收记录.md) | 自测验收结果、遗留问题与投递前清单 |
+
+完整索引见 [docs/README.md](docs/README.md)。
 
 ---
 
@@ -98,7 +116,7 @@ reqflow/
 │   │   ├── common/         # Result、异常、错误码、安全上下文
 │   │   ├── config/         # Security、MyBatis-Plus、OpenAPI
 │   │   ├── controller/     # REST 接口
-│   │   ├── domain/entity/  # 19 张表的实体
+│   │   ├── domain/entity/  # 20 张表的实体
 │   │   ├── domain/enums/   # 状态、动作、类型枚举
 │   │   ├── dto/ vo/        # 入参校验对象与视图对象
 │   │   ├── mapper/         # MyBatis-Plus Mapper
@@ -110,6 +128,7 @@ reqflow/
 │   └── src/test/           # 状态机、权限、并发、编号测试
 ├── frontend/
 │   └── src/{api,layout,router,store,utils,views}
+├── docs/                     # 需求、接口、数据库、测试、部署等交付文档
 ├── nginx/nginx.conf
 ├── docker-compose.yml
 ├── .github/workflows/ci.yml
@@ -228,30 +247,31 @@ docker compose up -d --build
 
 需求状态由“动作 + 流转表”驱动，前端只提交动作编码，目标状态由服务端计算：
 
-| 动作 Action | 允许状态 From | 目标状态 To | 允许角色 Roles |
+| 动作 Action | 允许状态 From | 目标状态 To | 所需权限点 Permission |
 |---|---|---|---|
-| SUBMIT 提交 | 草稿 | 待受理 | 提出人 / 管理员 |
-| ACCEPT 受理 | 待受理 | 分析中 | 需求分析 |
-| SUBMIT_REVIEW 提交评审 | 分析中 | 待评审 | 需求分析（由发起评审触发） |
-| REVIEW_PASS 评审通过 | 待评审 | 评审通过 | 主持人（由评审结论触发） |
-| REVIEW_REJECT 评审驳回 | 待评审 | 已驳回 | 主持人（由评审结论触发） |
-| RESUBMIT 重新提交 | 已驳回 | 分析中 | 提出人 / 需求分析 |
-| SCHEDULE 排期 | 评审通过 | 已排期 | 项目经理 |
-| START_DEV 开始开发 | 已排期 | 开发中 | 项目经理 / 开发 |
-| SUBMIT_TEST 提交测试 | 开发中 | 测试中 | 开发 / 测试 / 项目经理 |
-| SUBMIT_ACCEPTANCE 提交验收 | 测试中 | 待验收 | 测试 / 项目经理 / 需求分析（由验收单触发） |
-| ACCEPT_PASS 验收通过 | 待验收 | 已验收 | 验收人（由验收单触发） |
-| ACCEPT_REJECT 验收不通过 | 待验收 | 开发中 | 验收人（由验收单触发） |
-| ARCHIVE 归档 | 已验收 | 已归档 | 需求分析 / 项目经理 |
-| HOLD / RESUME | 在途状态 | 已挂起 / 恢复原状态 | 需求分析 / 项目经理 |
-| CANCEL 撤销 | 未归档状态 | 已撤销 | 提出人 / 需求分析 / 项目经理 |
+| SUBMIT 提交 | 草稿 | 待受理 | `requirement:submit`（且为提出人） |
+| ACCEPT 受理 | 待受理 | 分析中 | `requirement:accept` |
+| SUBMIT_REVIEW 提交评审 | 分析中 | 待评审 | `requirement:submit-review`（由发起评审触发） |
+| REVIEW_PASS 评审通过 | 待评审 | 评审通过 | `requirement:review-decide`（由评审结论触发） |
+| REVIEW_REJECT 评审驳回 | 待评审 | 已驳回 | `requirement:review-decide`（由评审结论触发） |
+| RESUBMIT 重新提交 | 已驳回 | 分析中 | `requirement:submit`（且为提出人） |
+| SCHEDULE 排期 | 评审通过 | 已排期 | `requirement:schedule` |
+| START_DEV 开始开发 | 已排期 | 开发中 | `requirement:develop` |
+| SUBMIT_TEST 提交测试 | 开发中 | 测试中 | `requirement:submit-test` |
+| SUBMIT_ACCEPTANCE 提交验收 | 测试中 | 待验收 | `requirement:submit-acceptance`（由验收单触发） |
+| ACCEPT_PASS 验收通过 | 待验收 | 已验收 | `requirement:accept-decide`（由验收单触发） |
+| ACCEPT_REJECT 验收不通过 | 待验收 | 开发中 | `requirement:accept-decide`（由验收单触发） |
+| ARCHIVE 归档 | 已验收 | 已归档 | `requirement:archive` |
+| HOLD / RESUME | 在途状态 | 已挂起 / 恢复原状态 | `requirement:hold` |
+| CANCEL 撤销 | 未归档状态 | 已撤销 | `requirement:cancel` |
 
 实现要点：
 
 1. 前端只提交动作编码，目标状态由服务端根据流转表计算，禁止直接修改 `status`；
-2. 评审通过、验收结论由评审单/验收单驱动，避免绕过单据直接改状态；
-3. 挂起使用 `hold_from_status` 记录原状态，恢复时回到原状态；
-4. 每次流转写审计日志，详情页时间线由审计日志生成。
+2. 流转表绑定的是**权限点**而不是角色码，角色只是权限点的集合，调整授权只需改数据；
+3. 评审通过、验收结论由评审单/验收单驱动，避免绕过单据直接改状态；
+4. 挂起使用 `hold_from_status` 记录原状态，恢复时回到原状态；
+5. 每次流转写审计日志，详情页时间线由审计日志生成。
 
 ---
 
@@ -312,6 +332,7 @@ erDiagram
     REQUIREMENT ||--o{ REQUIREMENT_ATTACHMENT : attaches
     REQUIREMENT ||--o{ REVIEW : reviewed_by
     REVIEW ||--o{ REVIEW_OPINION : opinions
+    REVIEW ||--o{ REVIEW_PARTICIPANT : invites
     REQUIREMENT ||--o{ CHANGE_REQUEST : changed_by
     REQUIREMENT ||--o{ TASK : decomposed_into
     REQUIREMENT ||--o{ DELIVERABLE : delivered
@@ -425,7 +446,7 @@ ra 归档 → 版本历史/审计时间线可查
 
 ## 设计取舍与演进 · Trade-offs & Roadmap
 
-**为什么用单体？** 单人、一个月、几十个用户的规模下，单体分层的收益远大于微服务；拆分会把时间消耗在注册中心、网关、分布式事务上，反而讲不清核心业务。
+**为什么用单体？** 课程小组项目 + 个人 v2 工程化重构、几十个用户的规模下，单体分层的收益远大于微服务；拆分会把时间消耗在注册中心、网关、分布式事务上，反而讲不清核心业务。
 
 **为什么自研轻量状态机？** 本项目状态与角色约束明确，枚举 + 流转表 200 行即可表达；引入 Flowable/Activiti 的学习与集成成本远超收益。若流程需要业务人员可视化配置，再考虑工作流引擎。
 
@@ -433,7 +454,9 @@ ra 归档 → 版本历史/审计时间线可查
 
 **明确不做（Out of Scope）**：微服务拆分、注册中心、分布式事务、BPMN 工作流引擎、移动端/小程序、真实短信/企微集成、多租户、分库分表、BI 大屏。
 
-原因：与初级岗位和 60-90 小时单人项目不匹配，强行加入会牺牲主流程闭环。
+原因：与课程小组项目 + 个人 v2 工程化重构的交付规模不匹配，强行加入会牺牲主流程闭环。
+
+**AI 辅助边界**：AI 用于文档初稿、样板代码与测试用例草稿；需求建模、状态机与权限模型、数据权限 SQL、并发与事务方案由本人决策并逐行复核，所有改动均在本地完成构建、测试与迁移验证后再提交。
 
 ### 本轮工程加固 · Hardening
 
@@ -468,8 +491,8 @@ ra 归档 → 版本历史/审计时间线可查
 ## 附录 · STAR表述
 
 - **S 背景**：银行/国企项目按“需求提出—评审—排期—开发测试—验收归档”运作，需求散落在邮件和 Excel，变更与验收缺少留痕。
-- **T 任务**：在 60-90 小时内独立完成一个可演示、可讲清的需求交付协同平台，覆盖权限、流程、单据、审计与导出。
-- **A 行动**：采用 Spring Boot 单体分层；设计动作驱动的需求状态机；实现 RBAC + 四档数据权限；用评审单/变更单/验收单串起交付链路；用 AOP 记录审计；用 Flyway 管理数据版本；用 Vue3 + Element Plus 完成 9 个核心页面。
+- **T 任务**：以课程小组项目完成业务原型，再在个人 v2 阶段独立完成架构收敛、权限模型重构与工程化补齐，交付一个可演示、可讲清的需求交付协同平台，覆盖权限、流程、单据、审计与导出。
+- **A 行动**：采用 Spring Boot 单体分层；设计动作驱动的需求状态机；实现 RBAC + 四档数据权限，并把流转与越权判断统一到权限点；用评审单/变更单/验收单串起交付链路；用 AOP 记录审计；用 Flyway 管理数据版本；用 Vue3 + Element Plus 完成 9 个核心页面。
 - **R 结果**：需求全流程可端到端演示，非法流转与越权有明确错误码，归档后只读可追溯，Excel 导出与看板可用，33 个自动化测试通过。
 
 ---
